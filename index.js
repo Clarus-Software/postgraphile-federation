@@ -107,12 +107,11 @@ function applyShareable(sdl, shareableFields) {
 //     },
 //   ]
 //
-// A selector matches a field line when the current type matches one of `types`
-// AND the field name appears in `fields` (both required — no bare-name match).
-// Type matching is exact unless the pattern contains `*` (glob, anchored), so
-// one pattern can cover a row type plus its aggregate variants. Only object
-// types (`type Foo { ... }`) are walked — input/interface/union/enum are
-// skipped. Gate a mutation by listing `"Mutation"` in `types`.
+// A selector matches when the container type matches one of `types` AND the
+// field name appears in `fields` (both required — no bare-name match). Type
+// matching is exact unless the pattern contains `*` (glob, anchored), so one
+// pattern can cover a row type plus its aggregate variants. Only object types
+// are annotated. Gate a mutation by listing `"Mutation"` in `types`.
 
 // Returns true if `typeName` matches any pattern; `*` is a glob (anchored).
 function typeMatches(typeName, patterns) {
@@ -127,51 +126,61 @@ function typeMatches(typeName, patterns) {
   return false;
 }
 
-// Walks the printed SDL line-by-line, tracking the current type block, and
-// annotates field definitions with @requiresScopes per the bindings table.
+// First scope whose selector covers (typeName, fieldName), or null.
+function scopeFor(typeName, fieldName, authBindings) {
+  for (const binding of authBindings) {
+    for (const selector of binding.selectors) {
+      if (selector.fields.includes(fieldName) && typeMatches(typeName, selector.types)) {
+        return binding.scope;
+      }
+    }
+  }
+  return null;
+}
+
+// Build the `@requiresScopes(scopes: [["<scope>"]])` directive AST node.
+function requiresScopesDirective(scope) {
+  return {
+    kind: "Directive",
+    name: { kind: "Name", value: "requiresScopes" },
+    arguments: [
+      {
+        kind: "Argument",
+        name: { kind: "Name", value: "scopes" },
+        value: {
+          kind: "ListValue",
+          values: [
+            { kind: "ListValue", values: [{ kind: "StringValue", value: scope }] },
+          ],
+        },
+      },
+    ],
+  };
+}
+
+// Annotate object-type fields with @requiresScopes per the bindings table.
+// AST-based (like applyShareable) — robust to multi-line field signatures,
+// which a line/regex walker corrupts (it would inject the directive into the
+// middle of a wrapped argument list).
 function applyRequiresScopes(sdl, authBindings) {
   if (!authBindings || authBindings.length === 0) return sdl;
 
-  const lines = sdl.split("\n");
-  let currentType = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Track type-block boundaries — object types only.
-    const typeOpen = line.match(/^(?:extend )?type (\w+)/);
-    if (typeOpen) {
-      currentType = typeOpen[1];
-      continue;
-    }
-    if (line === "}") {
-      currentType = null;
-      continue;
-    }
-    if (!currentType) continue;
-
-    // Field line: `  fieldName: ReturnType` or `  fieldName(args…): …`.
-    const m = line.match(/^(\s+)(\w+)(\s*[:(])(.*)$/);
-    if (!m) continue;
-    const fieldName = m[2];
-
-    let scope = null;
-    for (const binding of authBindings) {
-      for (const selector of binding.selectors) {
-        if (!selector.fields.includes(fieldName)) continue;
-        if (!typeMatches(currentType, selector.types)) continue;
-        scope = binding.scope;
-        break;
-      }
-      if (scope) break;
-    }
-
-    if (scope) {
-      lines[i] = `${m[1]}${m[2]}${m[3]}${m[4]} @requiresScopes(scopes: [[${JSON.stringify(scope)}]])`;
-    }
-  }
-
-  return lines.join("\n");
+  return print(
+    visit(parse(sdl), {
+      ObjectTypeDefinition(node) {
+        if (!node.fields) return undefined;
+        const typeName = node.name.value;
+        let changed = false;
+        const fields = node.fields.map((field) => {
+          const scope = scopeFor(typeName, field.name.value, authBindings);
+          if (!scope) return field;
+          changed = true;
+          return { ...field, directives: [...(field.directives || []), requiresScopesDirective(scope)] };
+        });
+        return changed ? { ...node, fields } : undefined;
+      },
+    }),
+  );
 }
 
 /**
