@@ -2,7 +2,7 @@
 
 Turn a **PostGraphile v4** schema into a valid **Apollo Federation v2** subgraph.
 
-A small, product-agnostic helper shared by every Clarus PostGraphile subgraph (`ai-messaging`, `agents`, and any future one). The caller supplies the Postgres schemas, the PostGraphile options, and the `@shareable` field map — nothing in here is specific to any one product.
+A small, product-agnostic helper for any PostGraphile subgraph you want to federate behind an Apollo Router. The caller supplies the Postgres schemas, the PostGraphile options, and the `@shareable` field map — nothing in here is specific to any one application.
 
 ---
 
@@ -25,7 +25,7 @@ So we own this thin, well-scoped transform rather than forking it into every sub
 
 ## Install
 
-Consumed as a git dependency (mirrors the backend's `liquid_filters` gem pattern — the repo is public, so no credentials are needed):
+Consumed as a git dependency (the repo is public, so no credentials are needed):
 
 ```jsonc
 // package.json
@@ -91,4 +91,4 @@ Extend the `sdlTransforms` pipeline in `index.js` (one entry per transform — e
 
 ## Versioning
 
-Consumers pin to a branch (`#main`) or tag; their lockfile records the resolved commit (same model as `Gemfile.lock`). Tag releases (`v0.1.0`, …) when you want consumers to move deliberately rather than track `main`.
+Consumers pin to a branch (`#main`) or tag; their `package-lock.json` records the resolved commit. Tag releases (`v0.1.0`, …) when you want consumers to move deliberately rather than track `main`.
